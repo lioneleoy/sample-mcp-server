@@ -38,6 +38,12 @@ async def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/")
+async def root() -> list[dict[str, Any]]:
+    """List available tools (root endpoint)."""
+    return await list_tools()
+
+
 @app.get("/tools")
 async def list_tools() -> list[dict[str, Any]]:
     """List available tools."""
