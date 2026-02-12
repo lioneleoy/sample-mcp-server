@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import Body, FastAPI
 from pydantic import BaseModel
 
 from app.services.jsonplaceholder_client import JSONPlaceholderClient
@@ -45,9 +45,18 @@ async def root() -> list[dict[str, Any]]:
 
 
 @app.post("/")
-async def root_call_tool(request: ToolCall) -> ToolResult:
+async def root_call_tool(payload: Any = Body(default=None)) -> ToolResult:
     """Call a tool via root endpoint for compatibility."""
-    return await call_tool(request)
+    if payload is None:
+        return ToolResult(success=False, error="Missing request body")
+
+    if isinstance(payload, dict):
+        name = payload.get("name") or payload.get("tool")
+        arguments = payload.get("arguments") or payload.get("args") or {}
+        if isinstance(name, str) and isinstance(arguments, dict):
+            return await call_tool(ToolCall(name=name, arguments=arguments))
+
+    return ToolResult(success=False, error="Invalid tool call payload")
 
 
 @app.get("/tools")
