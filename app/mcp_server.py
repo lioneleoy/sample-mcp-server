@@ -1,12 +1,21 @@
 """FastAPI-based server that exposes JSONPlaceholder API tools as HTTP endpoints."""
 
 import logging
+import sys
 from typing import Any
 
-from fastapi import Body, FastAPI
+from fastapi import Body, FastAPI, Request
 from pydantic import BaseModel
 
 from app.services.jsonplaceholder_client import JSONPlaceholderClient
+
+# Configure logging to ensure it outputs to stdout
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True
+)
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +23,16 @@ app = FastAPI(
     title="JSONPlaceholder MCP Server",
     description="HTTP server exposing JSONPlaceholder API as tools",
 )
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all incoming requests."""
+    logger.info(f"🔵 {request.method} {request.url.path} from {request.client.host if request.client else 'unknown'}")
+    response = await call_next(request)
+    logger.info(f"🟢 {request.method} {request.url.path} → {response.status_code}")
+    return response
+
 
 # Initialize client
 client = JSONPlaceholderClient(timeout=10)
@@ -47,16 +66,20 @@ async def root() -> list[dict[str, Any]]:
 @app.post("/")
 async def root_call_tool(payload: Any = Body(default=None)) -> ToolResult:
     """Call a tool via root endpoint for compatibility."""
+    logger.info(f"POST / received payload: {payload}")
+    logger.info(f"Payload type: {type(payload)}")
+    
     if payload is None:
         return ToolResult(success=False, error="Missing request body")
 
     if isinstance(payload, dict):
+        logger.info(f"Payload keys: {list(payload.keys())}")
         name = payload.get("name") or payload.get("tool")
         arguments = payload.get("arguments") or payload.get("args") or {}
         if isinstance(name, str) and isinstance(arguments, dict):
             return await call_tool(ToolCall(name=name, arguments=arguments))
 
-    return ToolResult(success=False, error="Invalid tool call payload")
+    return ToolResult(success=False, error=f"Invalid tool call payload: {payload}")
 
 
 @app.get("/tools")
