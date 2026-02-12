@@ -44,6 +44,12 @@ async def root() -> list[dict[str, Any]]:
     return await list_tools()
 
 
+@app.post("/")
+async def root_call_tool(request: ToolCall) -> ToolResult:
+    """Call a tool via root endpoint for compatibility."""
+    return await call_tool(request)
+
+
 @app.get("/tools")
 async def list_tools() -> list[dict[str, Any]]:
     """List available tools."""
