@@ -64,22 +64,88 @@ async def root() -> list[dict[str, Any]]:
 
 
 @app.post("/")
-async def root_call_tool(payload: Any = Body(default=None)) -> ToolResult:
-    """Call a tool via root endpoint for compatibility."""
+async def handle_jsonrpc(payload: Any = Body(default=None)) -> dict[str, Any]:
+    """Handle JSON-RPC 2.0 requests (MCP protocol)."""
     logger.info(f"POST / received payload: {payload}")
     logger.info(f"Payload type: {type(payload)}")
     
-    if payload is None:
-        return ToolResult(success=False, error="Missing request body")
-
-    if isinstance(payload, dict):
-        logger.info(f"Payload keys: {list(payload.keys())}")
-        name = payload.get("name") or payload.get("tool")
-        arguments = payload.get("arguments") or payload.get("args") or {}
-        if isinstance(name, str) and isinstance(arguments, dict):
-            return await call_tool(ToolCall(name=name, arguments=arguments))
-
-    return ToolResult(success=False, error=f"Invalid tool call payload: {payload}")
+    if not isinstance(payload, dict):
+        return {"jsonrpc": "2.0", "error": {"code": -32600, "message": "Invalid Request"}, "id": None}
+    
+    logger.info(f"Payload keys: {list(payload.keys())}")
+    
+    jsonrpc_version = payload.get("jsonrpc")
+    method = payload.get("method")
+    params = payload.get("params", {})
+    request_id = payload.get("id")
+    
+    if jsonrpc_version != "2.0":
+        return {"jsonrpc": "2.0", "error": {"code": -32600, "message": "Invalid Request"}, "id": request_id}
+    
+    logger.info(f"JSON-RPC method: {method}")
+    
+    # Handle MCP protocol methods
+    if method == "initialize":
+        return {
+            "jsonrpc": "2.0",
+            "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {
+                    "tools": {}
+                },
+                "serverInfo": {
+                    "name": "jsonplaceholder-mcp-server",
+                    "version": "1.0.0"
+                }
+            },
+            "id": request_id
+        }
+    
+    elif method == "tools/list":
+        tools = await list_tools()
+        return {
+            "jsonrpc": "2.0",
+            "result": {
+                "tools": tools
+            },
+            "id": request_id
+        }
+    
+    elif method == "tools/call":
+        tool_name = params.get("name")
+        arguments = params.get("arguments", {})
+        
+        if not tool_name:
+            return {
+                "jsonrpc": "2.0",
+                "error": {"code": -32602, "message": "Missing tool name"},
+                "id": request_id
+            }
+        
+        try:
+            result = await call_tool(ToolCall(name=tool_name, arguments=arguments))
+            return {
+                "jsonrpc": "2.0",
+                "result": {
+                    "content": [{"type": "text", "text": str(result.data)}] if result.success else [],
+                    "isError": not result.success
+                },
+                "id": request_id
+            }
+        except Exception as e:
+            logger.error(f"Tool execution error: {str(e)}")
+            return {
+                "jsonrpc": "2.0",
+                "error": {"code": -32603, "message": f"Tool execution failed: {str(e)}"},
+                "id": request_id
+            }
+    
+    else:
+        return {
+            "jsonrpc": "2.0",
+            "error": {"code": -32601, "message": f"Method not found: {method}"},
+            "id": request_id
+        }
 
 
 @app.get("/tools")
