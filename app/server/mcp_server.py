@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import Body, FastAPI, Request
 from pydantic import BaseModel
 
-from app.services.jsonplaceholder_client import JSONPlaceholderClient
+from app.server.services.jsonplaceholder_client import JSONPlaceholderClient
 
 # Configure logging to ensure it outputs to stdout
 logging.basicConfig(

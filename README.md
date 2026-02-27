@@ -9,7 +9,7 @@ A production-grade Model Context Protocol (MCP) server implemented in Python tha
 - **Robust Error Handling** — Network errors, timeouts, HTTP errors handled gracefully with structured responses
 - **Production Logging** — Comprehensive logging at DEBUG, INFO, WARNING, and ERROR levels
 - **Clean Architecture** — Separation of concerns: services layer (HTTP), tools layer (MCP definitions), and server layer
-- **Render Deployment Ready** — Environment variable configuration, no hardcoded ports, 0.0.0.0 binding
+- **Managed Platform Ready** — Environment variable configuration, no hardcoded ports, 0.0.0.0 binding
 - **Health Check Endpoint** — Built-in health verification method
 - **Request Timeouts** — 10-second timeout on all API requests to prevent hanging
 - **Async/Await** — Full async support for scalability
@@ -18,18 +18,19 @@ A production-grade Model Context Protocol (MCP) server implemented in Python tha
 
 ```
 app/
-├── __init__.py                      # Package initialization
 ├── main.py                          # Entry point with environment configuration
-├── mcp_server.py                    # MCP server implementation with tool registration
-├── services/
-│   ├── __init__.py
-│   └── jsonplaceholder_client.py    # HTTP client with error handling
-├── tools/
-│   ├── __init__.py
-│   ├── posts.py                     # Post-related MCP tools
-│   └── users.py                     # User-related MCP tools
+└── server/
+  ├── __init__.py                  # Server package initialization
+  ├── mcp_server.py                # MCP server implementation with tool registration
+  ├── services/
+  │   ├── __init__.py
+  │   └── jsonplaceholder_client.py # HTTP client with error handling
+  └── tools/
+    ├── __init__.py
+    ├── posts.py                 # Post-related MCP tools
+    └── users.py                 # User-related MCP tools
 requirements.txt                      # Python dependencies
-Procfile                             # Render deployment configuration
+Procfile                             # Deployment start command
 README.md                            # This file
 .gitignore                           # Git ignore rules
 ```
@@ -270,7 +271,7 @@ Tools are defined with:
 
 **Design Pattern:** Tool definitions and execution handlers separated
 
-### Server Layer (`mcp_server.py`)
+### Server Layer (`server/mcp_server.py`)
 
 The MCP server:
 - Registers all tools at startup
@@ -286,6 +287,30 @@ The MCP server:
 - **Logging setup** — Structured logging to stdout
 - **Async runtime** — asyncio.run() for server execution
 - **Error handling** — Graceful shutdown and error reporting
+
+## Deployment on Natoma Security Platform
+
+This server is compatible with Natoma-managed hosting requirements:
+
+- Binds to `0.0.0.0` by default
+- Honors injected `PORT` environment variable
+- Exposes `/health` endpoint for liveness checks
+- Uses stdout logging for platform log collection
+
+### Steps
+
+1. **Configure service runtime:**
+  - Runtime: Python 3.11+
+  - Build Command: `pip install -r requirements.txt`
+  - Start Command: `python -m app.main`
+
+2. **Set Environment Variables (if required by your workspace):**
+  - `PORT` — Usually platform-injected
+  - `HOST` — Leave unset (defaults to `0.0.0.0`) or set explicitly
+  - `LOG_LEVEL` — Optional (`INFO`, `DEBUG`, `WARNING`, `ERROR`)
+
+3. **Set health-check path:**
+  - `/health`
 
 ## Deployment on Render
 
@@ -322,7 +347,7 @@ Render can verify server health by calling the built-in health check:
 ```bash
 # Test a single tool via Python
 python -c "
-from app.services import JSONPlaceholderClient
+from app.server.services import JSONPlaceholderClient
 
 client = JSONPlaceholderClient()
 post = client.get_post(1)
@@ -361,7 +386,7 @@ All methods include:
 - Timeout support (default 10 seconds)
 
 ```python
-from app.services import JSONPlaceholderClient
+from app.server.services import JSONPlaceholderClient
 
 client = JSONPlaceholderClient()
 

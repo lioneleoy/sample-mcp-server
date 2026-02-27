@@ -52,16 +52,17 @@ streamlit run streamlit_agent/app.py
 sample-mcp-server/
 │
 ├── app/                                 # MCP Server
-│   ├── __init__.py
 │   ├── main.py                          # Entry point
-│   ├── mcp_server.py                    # MCP server implementation
-│   ├── services/
-│   │   ├── __init__.py
-│   │   └── jsonplaceholder_client.py    # HTTP client for JSONPlaceholder
-│   └── tools/
+│   └── server/
 │       ├── __init__.py
-│       ├── posts.py                     # Post-related MCP tools
-│       └── users.py                     # User-related MCP tools
+│       ├── mcp_server.py                # MCP server implementation
+│       ├── services/
+│       │   ├── __init__.py
+│       │   └── jsonplaceholder_client.py # HTTP client for JSONPlaceholder
+│       └── tools/
+│           ├── __init__.py
+│           ├── posts.py                 # Post-related MCP tools
+│           └── users.py                 # User-related MCP tools
 │
 ├── streamlit_agent/                     # Streamlit Agent
 │   ├── __init__.py
@@ -308,7 +309,7 @@ streamlit run streamlit_agent/app.py
 **Test MCP Server:**
 ```bash
 python << 'EOF'
-from app.services import JSONPlaceholderClient
+from app.server.services import JSONPlaceholderClient
 
 client = JSONPlaceholderClient()
 post = client.get_post(1)
