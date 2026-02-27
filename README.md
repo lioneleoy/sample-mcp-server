@@ -295,6 +295,7 @@ This server is compatible with Natoma-managed hosting requirements:
 - Binds to `0.0.0.0` by default
 - Honors injected `PORT` environment variable
 - Exposes `/health` endpoint for liveness checks
+- Supports MCP JSON-RPC on both `/` and `/mcp` endpoints
 - Uses stdout logging for platform log collection
 
 ### Steps

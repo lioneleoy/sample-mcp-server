@@ -19,6 +19,12 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+SUPPORTED_PROTOCOL_VERSIONS = [
+    "2025-11-05",
+    "2025-06-18",
+    "2025-03-26",
+]
+
 app = FastAPI(
     title="JSONPlaceholder MCP Server",
     description="HTTP server exposing JSONPlaceholder API as tools",
@@ -86,10 +92,17 @@ async def handle_jsonrpc(payload: Any = Body(default=None)) -> dict[str, Any]:
     
     # Handle MCP protocol methods
     if method == "initialize":
+        requested_version = params.get("protocolVersion") if isinstance(params, dict) else None
+        negotiated_version = (
+            requested_version
+            if requested_version in SUPPORTED_PROTOCOL_VERSIONS
+            else SUPPORTED_PROTOCOL_VERSIONS[0]
+        )
+
         return {
             "jsonrpc": "2.0",
             "result": {
-                "protocolVersion": "2025-06-18",
+                "protocolVersion": negotiated_version,
                 "capabilities": {
                     "tools": {}
                 },
@@ -99,6 +112,13 @@ async def handle_jsonrpc(payload: Any = Body(default=None)) -> dict[str, Any]:
                 }
             },
             "id": request_id
+        }
+
+    elif method == "notifications/initialized":
+        return {
+            "jsonrpc": "2.0",
+            "result": {},
+            "id": request_id,
         }
     
     elif method == "tools/list":
@@ -146,6 +166,12 @@ async def handle_jsonrpc(payload: Any = Body(default=None)) -> dict[str, Any]:
             "error": {"code": -32601, "message": f"Method not found: {method}"},
             "id": request_id
         }
+
+
+@app.post("/mcp")
+async def handle_jsonrpc_mcp(payload: Any = Body(default=None)) -> dict[str, Any]:
+    """Handle JSON-RPC 2.0 requests on /mcp for hosted platform compatibility."""
+    return await handle_jsonrpc(payload)
 
 
 @app.get("/tools")
