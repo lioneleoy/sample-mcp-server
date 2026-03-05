@@ -7,7 +7,10 @@ import sys
 from dotenv import load_dotenv
 import uvicorn
 
-from app.server.mcp_server import app
+try:
+    from app.server.mcp_server import app
+except ModuleNotFoundError:
+    from server.mcp_server import app
 
 # Load environment variables from .env file
 load_dotenv()

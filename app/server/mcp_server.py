@@ -11,7 +11,10 @@ from fastapi import Body, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from app.server.services.jsonplaceholder_client import JSONPlaceholderClient
+try:
+    from app.server.services.jsonplaceholder_client import JSONPlaceholderClient
+except ModuleNotFoundError:
+    from server.services.jsonplaceholder_client import JSONPlaceholderClient
 
 # Configure logging to ensure it outputs to stdout
 logging.basicConfig(
