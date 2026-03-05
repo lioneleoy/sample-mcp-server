@@ -116,7 +116,7 @@ async def _handle_jsonrpc_request(
         }, 200, assigned_session
 
     if method in {"notifications/initialized", "tools/list", "tools/call"}:
-        if not session_id or session_id not in active_sessions:
+        if session_id and session_id not in active_sessions:
             return _jsonrpc_error(-32000, "Bad Request: invalid session ID or method.", request_id), 400, None
 
     if method == "notifications/initialized":
@@ -167,6 +167,41 @@ async def _handle_jsonrpc_request(
     return _jsonrpc_error(-32601, f"Method not found: {method}", request_id), 404, None
 
 
+async def _handle_jsonrpc_payload(
+    payload: Any,
+    session_id: str | None,
+) -> tuple[Any, int, str | None]:
+    if isinstance(payload, list):
+        if not payload:
+            return _jsonrpc_error(-32600, "Invalid Request", None), 400, None
+
+        responses: list[dict[str, Any]] = []
+        assigned_session: str | None = None
+        effective_session = session_id
+        worst_status = 200
+
+        for item in payload:
+            body, status, new_session = await _handle_jsonrpc_request(item, effective_session)
+            if status >= 400:
+                worst_status = status
+
+            if new_session and not assigned_session:
+                assigned_session = new_session
+                effective_session = new_session
+
+            if isinstance(item, dict) and item.get("id") is None and "result" in body:
+                continue
+
+            responses.append(body)
+
+        if not responses:
+            return {}, 200, assigned_session
+
+        return responses, worst_status, assigned_session
+
+    return await _handle_jsonrpc_request(payload, session_id)
+
+
 @app.get("/health")
 async def health_check() -> dict[str, str]:
     """Health check endpoint."""
@@ -185,7 +220,7 @@ async def handle_jsonrpc(request: Request, payload: Any = Body(default=None)) ->
     logger.info(f"POST / received payload: {payload}")
     logger.info(f"Payload type: {type(payload)}")
     session_id = request.headers.get(SESSION_ID_HEADER_NAME)
-    response_body, status_code, assigned_session = await _handle_jsonrpc_request(payload, session_id)
+    response_body, status_code, assigned_session = await _handle_jsonrpc_payload(payload, session_id)
 
     response_headers: dict[str, str] = {}
     if assigned_session:
@@ -198,7 +233,7 @@ async def handle_jsonrpc(request: Request, payload: Any = Body(default=None)) ->
 async def handle_jsonrpc_mcp(request: Request, payload: Any = Body(default=None)) -> JSONResponse:
     """Handle JSON-RPC 2.0 requests on /mcp for hosted platform compatibility."""
     session_id = request.headers.get(SESSION_ID_HEADER_NAME)
-    response_body, status_code, assigned_session = await _handle_jsonrpc_request(payload, session_id)
+    response_body, status_code, assigned_session = await _handle_jsonrpc_payload(payload, session_id)
 
     response_headers: dict[str, str] = {}
     if assigned_session:
