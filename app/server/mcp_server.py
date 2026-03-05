@@ -1,10 +1,14 @@
 """FastAPI-based server that exposes JSONPlaceholder API tools as HTTP endpoints."""
 
+import asyncio
+import json
 import logging
 import sys
+from uuid import uuid4
 from typing import Any
 
 from fastapi import Body, FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.server.services.jsonplaceholder_client import JSONPlaceholderClient
@@ -25,6 +29,8 @@ SUPPORTED_PROTOCOL_VERSIONS = [
     "2025-03-26",
 ]
 
+SESSION_ID_HEADER_NAME = "mcp-session-id"
+
 app = FastAPI(
     title="JSONPlaceholder MCP Server",
     description="HTTP server exposing JSONPlaceholder API as tools",
@@ -42,6 +48,7 @@ async def log_requests(request: Request, call_next):
 
 # Initialize client
 client = JSONPlaceholderClient(timeout=10)
+active_sessions: set[str] = set()
 
 
 class ToolCall(BaseModel):
@@ -54,7 +61,110 @@ class ToolResult(BaseModel):
     """Tool result response."""
     success: bool
     data: Any = None
-    error: str = None
+    error: str | None = None
+
+
+def _jsonrpc_error(code: int, message: str, request_id: Any) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "error": {"code": code, "message": message},
+        "id": request_id,
+    }
+
+
+async def _handle_jsonrpc_request(
+    payload: Any,
+    session_id: str | None,
+) -> tuple[dict[str, Any], int, str | None]:
+    if not isinstance(payload, dict):
+        return _jsonrpc_error(-32600, "Invalid Request", None), 400, None
+
+    jsonrpc_version = payload.get("jsonrpc")
+    method = payload.get("method")
+    params = payload.get("params", {})
+    request_id = payload.get("id")
+
+    if jsonrpc_version != "2.0":
+        return _jsonrpc_error(-32600, "Invalid Request", request_id), 400, None
+
+    logger.info(f"JSON-RPC method: {method}")
+
+    if method == "initialize":
+        requested_version = params.get("protocolVersion") if isinstance(params, dict) else None
+        negotiated_version = (
+            requested_version
+            if requested_version in SUPPORTED_PROTOCOL_VERSIONS
+            else SUPPORTED_PROTOCOL_VERSIONS[0]
+        )
+
+        assigned_session = session_id if session_id in active_sessions else str(uuid4())
+        active_sessions.add(assigned_session)
+
+        return {
+            "jsonrpc": "2.0",
+            "result": {
+                "protocolVersion": negotiated_version,
+                "capabilities": {
+                    "tools": {},
+                },
+                "serverInfo": {
+                    "name": "jsonplaceholder-mcp-server",
+                    "version": "1.0.0",
+                },
+            },
+            "id": request_id,
+        }, 200, assigned_session
+
+    if method in {"notifications/initialized", "tools/list", "tools/call"}:
+        if not session_id or session_id not in active_sessions:
+            return _jsonrpc_error(-32000, "Bad Request: invalid session ID or method.", request_id), 400, None
+
+    if method == "notifications/initialized":
+        return {
+            "jsonrpc": "2.0",
+            "result": {},
+            "id": request_id,
+        }, 200, None
+
+    if method == "tools/list":
+        tools = await list_tools()
+        return {
+            "jsonrpc": "2.0",
+            "result": {
+                "tools": tools,
+            },
+            "id": request_id,
+        }, 200, None
+
+    if method == "tools/call":
+        if not isinstance(params, dict):
+            return _jsonrpc_error(-32602, "Invalid params", request_id), 400, None
+
+        tool_name = params.get("name")
+        arguments = params.get("arguments", {})
+
+        if not tool_name:
+            return _jsonrpc_error(-32602, "Missing tool name", request_id), 400, None
+
+        try:
+            result = await call_tool(ToolCall(name=tool_name, arguments=arguments))
+            content = []
+            if result.success:
+                content = [{"type": "text", "text": json.dumps(result.data, default=str)}]
+
+            return {
+                "jsonrpc": "2.0",
+                "result": {
+                    "content": content,
+                    "isError": not result.success,
+                },
+                "id": request_id,
+            }, 200, None
+        except Exception as exc:
+            logger.error(f"Tool execution error: {str(exc)}")
+            return _jsonrpc_error(-32603, f"Tool execution failed: {str(exc)}", request_id), 500, None
+
+    return _jsonrpc_error(-32601, f"Method not found: {method}", request_id), 404, None
 
 
 @app.get("/health")
@@ -70,108 +180,63 @@ async def root() -> list[dict[str, Any]]:
 
 
 @app.post("/")
-async def handle_jsonrpc(payload: Any = Body(default=None)) -> dict[str, Any]:
+async def handle_jsonrpc(request: Request, payload: Any = Body(default=None)) -> JSONResponse:
     """Handle JSON-RPC 2.0 requests (MCP protocol)."""
     logger.info(f"POST / received payload: {payload}")
     logger.info(f"Payload type: {type(payload)}")
-    
-    if not isinstance(payload, dict):
-        return {"jsonrpc": "2.0", "error": {"code": -32600, "message": "Invalid Request"}, "id": None}
-    
-    logger.info(f"Payload keys: {list(payload.keys())}")
-    
-    jsonrpc_version = payload.get("jsonrpc")
-    method = payload.get("method")
-    params = payload.get("params", {})
-    request_id = payload.get("id")
-    
-    if jsonrpc_version != "2.0":
-        return {"jsonrpc": "2.0", "error": {"code": -32600, "message": "Invalid Request"}, "id": request_id}
-    
-    logger.info(f"JSON-RPC method: {method}")
-    
-    # Handle MCP protocol methods
-    if method == "initialize":
-        requested_version = params.get("protocolVersion") if isinstance(params, dict) else None
-        negotiated_version = (
-            requested_version
-            if requested_version in SUPPORTED_PROTOCOL_VERSIONS
-            else SUPPORTED_PROTOCOL_VERSIONS[0]
-        )
+    session_id = request.headers.get(SESSION_ID_HEADER_NAME)
+    response_body, status_code, assigned_session = await _handle_jsonrpc_request(payload, session_id)
 
-        return {
-            "jsonrpc": "2.0",
-            "result": {
-                "protocolVersion": negotiated_version,
-                "capabilities": {
-                    "tools": {}
-                },
-                "serverInfo": {
-                    "name": "jsonplaceholder-mcp-server",
-                    "version": "1.0.0"
-                }
-            },
-            "id": request_id
-        }
+    response_headers: dict[str, str] = {}
+    if assigned_session:
+        response_headers[SESSION_ID_HEADER_NAME] = assigned_session
 
-    elif method == "notifications/initialized":
-        return {
-            "jsonrpc": "2.0",
-            "result": {},
-            "id": request_id,
-        }
-    
-    elif method == "tools/list":
-        tools = await list_tools()
-        return {
-            "jsonrpc": "2.0",
-            "result": {
-                "tools": tools
-            },
-            "id": request_id
-        }
-    
-    elif method == "tools/call":
-        tool_name = params.get("name")
-        arguments = params.get("arguments", {})
-        
-        if not tool_name:
-            return {
-                "jsonrpc": "2.0",
-                "error": {"code": -32602, "message": "Missing tool name"},
-                "id": request_id
-            }
-        
-        try:
-            result = await call_tool(ToolCall(name=tool_name, arguments=arguments))
-            return {
-                "jsonrpc": "2.0",
-                "result": {
-                    "content": [{"type": "text", "text": str(result.data)}] if result.success else [],
-                    "isError": not result.success
-                },
-                "id": request_id
-            }
-        except Exception as e:
-            logger.error(f"Tool execution error: {str(e)}")
-            return {
-                "jsonrpc": "2.0",
-                "error": {"code": -32603, "message": f"Tool execution failed: {str(e)}"},
-                "id": request_id
-            }
-    
-    else:
-        return {
-            "jsonrpc": "2.0",
-            "error": {"code": -32601, "message": f"Method not found: {method}"},
-            "id": request_id
-        }
+    return JSONResponse(content=response_body, status_code=status_code, headers=response_headers)
 
 
 @app.post("/mcp")
-async def handle_jsonrpc_mcp(payload: Any = Body(default=None)) -> dict[str, Any]:
+async def handle_jsonrpc_mcp(request: Request, payload: Any = Body(default=None)) -> JSONResponse:
     """Handle JSON-RPC 2.0 requests on /mcp for hosted platform compatibility."""
-    return await handle_jsonrpc(payload)
+    session_id = request.headers.get(SESSION_ID_HEADER_NAME)
+    response_body, status_code, assigned_session = await _handle_jsonrpc_request(payload, session_id)
+
+    response_headers: dict[str, str] = {}
+    if assigned_session:
+        response_headers[SESSION_ID_HEADER_NAME] = assigned_session
+
+    return JSONResponse(content=response_body, status_code=status_code, headers=response_headers)
+
+
+@app.get("/mcp")
+async def handle_mcp_stream(request: Request):
+    """Provide a lightweight SSE stream endpoint for Streamable HTTP MCP clients."""
+    session_id = request.headers.get(SESSION_ID_HEADER_NAME)
+    if not session_id or session_id not in active_sessions:
+        return JSONResponse(
+            content=_jsonrpc_error(-32000, "Bad Request: invalid session ID or method.", None),
+            status_code=400,
+        )
+
+    async def event_stream():
+        notification = {
+            "jsonrpc": "2.0",
+            "method": "notifications/message",
+            "params": {
+                "level": "info",
+                "data": "SSE stream ready",
+            },
+        }
+        yield f"event: message\\ndata: {json.dumps(notification)}\\n\\n"
+
+        for _ in range(3):
+            await asyncio.sleep(5)
+            yield ": keep-alive\\n\\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
 
 
 @app.get("/tools")

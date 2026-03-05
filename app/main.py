@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 def main():
     """Run the server."""
     host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", 8123))
+    port = int(os.environ.get("PORT", 8000))
     
     logger.info(f"Starting MCP server on {host}:{port}")
     

@@ -128,3 +128,6 @@ dmypy.json
 
 # Render specific
 render.log
+
+# Local reference implementation (exclude completely)
+ReferenceCode/
